@@ -51,11 +51,14 @@ cd ..
 # Update Asterisk configuration
 print_status "Updating Asterisk configuration..."
 cp /etc/asterisk/extensions.conf /etc/asterisk/extensions.conf.backup.$(date +%Y%m%d_%H%M%S)
+cp /etc/asterisk/pjsip.conf /etc/asterisk/pjsip.conf.backup.$(date +%Y%m%d_%H%M%S)
 cp asterisk-configs/extensions.conf /etc/asterisk/
+cp asterisk-configs/pjsip.conf /etc/asterisk/
 
 # Reload Asterisk configuration
 print_status "Reloading Asterisk configuration..."
 asterisk -rx "dialplan reload"
+asterisk -rx "pjsip reload"
 
 # Restart application
 print_status "Starting application..."
@@ -71,8 +74,9 @@ echo "🎉 System now supports 10-digit phone numbers!"
 echo ""
 echo "📋 Changes made:"
 echo "   - Frontend now accepts 10-digit phone numbers"
-echo "   - Added phone number validation"
+echo "   - Added phone number validation and formatting"
 echo "   - Updated Asterisk dialplan for outbound calls"
+echo "   - Configured Tbitel trunk with PJSIP"
 echo "   - Improved user interface with digit counters"
 echo ""
 echo "🔧 How to use:"
@@ -80,9 +84,12 @@ echo "   1. Enter your 10-digit phone number in 'Self Number'"
 echo "   2. Enter customer's 10-digit phone number in 'Customer Number'"
 echo "   3. Click 'Dial Now' to initiate the call"
 echo ""
-echo "⚠️  Important:"
-echo "   - You need to configure your SIP trunk provider in extensions.conf"
-echo "   - Replace 'your-sip-provider' with your actual provider details"
-echo "   - For testing, you can still use 6001, 6002 extensions"
+echo "📞 Tbitel Trunk Configuration:"
+echo "   - Provider: Tbitel (88.151.132.26)"
+echo "   - Protocol: PJSIP"
+echo "   - Codecs: ulaw, alaw"
+echo "   - DTMF: RFC4733"
 echo ""
-print_warning "Don't forget to configure your SIP trunk provider for real phone calls!"
+echo "✅ System is now ready for real phone calls!"
+echo ""
+print_status "Test the system by making a call between 10-digit numbers!"
