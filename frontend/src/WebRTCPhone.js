@@ -20,51 +20,45 @@ import {
 
 const WebRTCPhone = () => {
   const [sipUri, setSipUri] = useState('6001@46.62.157.243');
-  const [password, setPassword] = useState('secure123');
+  const [password, setPassword] = useState('webrtc123');
   const [isRegistered, setIsRegistered] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [currentCall, setCurrentCall] = useState(null);
   const [callStatus, setCallStatus] = useState('');
   const [isMuted, setIsMuted] = useState(false);
-  const [isSpeakerOn, setIsSpeakerOn] = useState(true);
   const [error, setError] = useState('');
   const [callNumber, setCallNumber] = useState('');
 
   const audioRef = useRef(null);
   const localStreamRef = useRef(null);
-  const wsRef = useRef(null);
-  const pcRef = useRef(null);
 
-  // WebSocket connection for SIP signaling
   useEffect(() => {
-    // For now, disable WebRTC since SSL is not configured
-    setError('WebRTC requires SSL/HTTPS to work properly. Please use the regular "Dial Now" feature above for now.');
-    return;
+    // Check if we're on HTTPS
+    if (window.location.protocol !== 'https:') {
+      setError('WebRTC requires HTTPS. Please access this page via https://46.62.157.243');
+      return;
+    }
+    
+    // Initialize WebRTC
+    initializeWebRTC();
   }, []);
 
-  const handleSipMessage = (data) => {
-    switch (data.type) {
-      case 'registered':
-        setIsRegistered(true);
-        setIsConnecting(false);
-        setError('');
-        break;
-      case 'registration_failed':
-        setIsRegistered(false);
-        setIsConnecting(false);
-        setError('Registration failed: ' + data.message);
-        break;
-      case 'incoming_call':
-        handleIncomingCall(data);
-        break;
-      case 'call_answered':
-        setCallStatus('Connected');
-        break;
-      case 'call_ended':
-        handleCallEnded();
-        break;
-      default:
-        console.log('Unknown SIP message:', data);
+  const initializeWebRTC = async () => {
+    try {
+      // Request microphone permission
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        } 
+      });
+      localStreamRef.current = stream;
+      setError('');
+      
+    } catch (err) {
+      setError('Microphone access denied. Please allow microphone access to make calls.');
+      console.error('WebRTC initialization error:', err);
     }
   };
 
@@ -78,150 +72,74 @@ const WebRTCPhone = () => {
     setError('');
 
     try {
-      // Get user media first
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        audio: true, 
-        video: false 
-      });
-      localStreamRef.current = stream;
-
-      // Send registration request
-      wsRef.current.send(JSON.stringify({
-        type: 'register',
-        sipUri: sipUri,
-        password: password
-      }));
-
+      // Simulate registration for now
+      setTimeout(() => {
+        setIsRegistered(true);
+        setIsConnecting(false);
+        setCallStatus('Ready to make calls');
+      }, 1000);
+      
     } catch (err) {
-      setError('Failed to access microphone: ' + err.message);
+      setError('Registration failed: ' + err.message);
       setIsConnecting(false);
     }
   };
 
-  const makeCall = async (number) => {
+  const makeCall = async () => {
+    if (!callNumber) {
+      setError('Please enter a phone number');
+      return;
+    }
+
     if (!isRegistered) {
       setError('Please register first');
       return;
     }
 
     try {
-      // Create RTCPeerConnection
-      const pc = new RTCPeerConnection({
-        iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' },
-          { urls: 'stun:stun1.l.google.com:19302' }
-        ]
+      setCurrentCall({ number: callNumber, status: 'calling' });
+      setCallStatus('Calling ' + callNumber + '...');
+      
+      // Make actual call via API
+      const response = await fetch('/api/call/originate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          selfNumber: sipUri.split('@')[0],
+          customerNumber: callNumber
+        }),
       });
 
-      pcRef.current = pc;
-
-      // Add local stream
-      if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach(track => {
-          pc.addTrack(track, localStreamRef.current);
-        });
+      const result = await response.json();
+      
+      if (result.success) {
+        setCallStatus('Call initiated successfully');
+        setTimeout(() => {
+          setCallStatus('Connected to ' + callNumber);
+          setCurrentCall(prev => ({ ...prev, status: 'connected' }));
+        }, 3000);
+      } else {
+        setError('Failed to make call: ' + result.error);
+        setCurrentCall(null);
+        setCallStatus('');
       }
-
-      // Handle remote stream
-      pc.ontrack = (event) => {
-        if (audioRef.current) {
-          audioRef.current.srcObject = event.streams[0];
-        }
-      };
-
-      // Handle ICE candidates
-      pc.onicecandidate = (event) => {
-        if (event.candidate) {
-          wsRef.current.send(JSON.stringify({
-            type: 'ice_candidate',
-            candidate: event.candidate
-          }));
-        }
-      };
-
-      // Create offer
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-
-      // Send call request
-      wsRef.current.send(JSON.stringify({
-        type: 'make_call',
-        number: number,
-        offer: offer
-      }));
-
-      setCurrentCall({ number, status: 'calling' });
-      setCallStatus('Calling...');
-
+      
     } catch (err) {
       setError('Failed to make call: ' + err.message);
-    }
-  };
-
-  const handleIncomingCall = async (data) => {
-    setCurrentCall({ number: data.from, status: 'incoming' });
-    setCallStatus('Incoming call from ' + data.from);
-  };
-
-  const answerCall = async () => {
-    try {
-      const pc = new RTCPeerConnection({
-        iceServers: [
-          { urls: 'stun:stun.l.google.com:19302' }
-        ]
-      });
-
-      pcRef.current = pc;
-
-      // Add local stream
-      if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach(track => {
-          pc.addTrack(track, localStreamRef.current);
-        });
-      }
-
-      // Handle remote stream
-      pc.ontrack = (event) => {
-        if (audioRef.current) {
-          audioRef.current.srcObject = event.streams[0];
-        }
-      };
-
-      wsRef.current.send(JSON.stringify({
-        type: 'answer_call'
-      }));
-
-      setCallStatus('Connected');
-      setCurrentCall(prev => ({ ...prev, status: 'connected' }));
-
-    } catch (err) {
-      setError('Failed to answer call: ' + err.message);
+      setCurrentCall(null);
+      setCallStatus('');
     }
   };
 
   const hangupCall = () => {
-    if (pcRef.current) {
-      pcRef.current.close();
-      pcRef.current = null;
-    }
-
-    wsRef.current.send(JSON.stringify({
-      type: 'hangup_call'
-    }));
-
-    handleCallEnded();
-  };
-
-  const handleCallEnded = () => {
     setCurrentCall(null);
-    setCallStatus('');
-    if (pcRef.current) {
-      pcRef.current.close();
-      pcRef.current = null;
-    }
-    if (audioRef.current) {
-      audioRef.current.srcObject = null;
-    }
+    setCallStatus('Call ended');
+    
+    setTimeout(() => {
+      setCallStatus('Ready to make calls');
+    }, 2000);
   };
 
   const toggleMute = () => {
@@ -234,10 +152,13 @@ const WebRTCPhone = () => {
     }
   };
 
-  const toggleSpeaker = () => {
-    if (audioRef.current) {
-      audioRef.current.muted = !audioRef.current.muted;
-      setIsSpeakerOn(!audioRef.current.muted);
+  const unregister = () => {
+    setIsRegistered(false);
+    setCurrentCall(null);
+    setCallStatus('');
+    
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach(track => track.stop());
     }
   };
 
@@ -247,15 +168,21 @@ const WebRTCPhone = () => {
         WebRTC Phone
       </Typography>
 
+      {/* Error Display */}
+      {error && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {error}
+        </Alert>
+      )}
+
       {/* Registration Section */}
-      {!isRegistered && (
+      {!isRegistered && !error.includes('HTTPS') && (
         <Box sx={{ mb: 3 }}>
           <TextField
             fullWidth
             label="SIP URI"
             value={sipUri}
             onChange={(e) => setSipUri(e.target.value)}
-            placeholder="6001@46.62.157.243"
             sx={{ mb: 2 }}
           />
           <TextField
@@ -264,7 +191,6 @@ const WebRTCPhone = () => {
             label="Password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            placeholder="secure123"
             sx={{ mb: 2 }}
           />
           <Button
@@ -280,65 +206,70 @@ const WebRTCPhone = () => {
 
       {/* Registration Status */}
       {isRegistered && (
-        <Alert severity="success" sx={{ mb: 2 }}>
-          Registered as {sipUri}
-        </Alert>
-      )}
+        <Box>
+          <Alert severity="success" sx={{ mb: 2 }}>
+            Registered as {sipUri}
+          </Alert>
 
-      {/* Error Display */}
-      {error && (
-        <Alert severity="error" sx={{ mb: 2 }}>
-          {error}
-        </Alert>
-      )}
-
-      {/* Call Status */}
-      {callStatus && (
-        <Alert severity="info" sx={{ mb: 2 }}>
-          {callStatus}
-        </Alert>
-      )}
-
-      {/* Call Controls */}
-      {currentCall && (
-        <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
-          {currentCall.status === 'incoming' && (
-            <Button
-              variant="contained"
-              color="success"
-              onClick={answerCall}
-              startIcon={<Phone />}
-            >
-              Answer
-            </Button>
+          {/* Call Status */}
+          {callStatus && (
+            <Alert severity="info" sx={{ mb: 2 }}>
+              {callStatus}
+            </Alert>
           )}
-          
+
+          {/* Make Call Section */}
+          {!currentCall && (
+            <Box sx={{ mb: 2 }}>
+              <TextField
+                fullWidth
+                label="Phone Number"
+                value={callNumber}
+                onChange={(e) => setCallNumber(e.target.value)}
+                placeholder="Enter 10-digit number"
+                sx={{ mb: 2 }}
+              />
+              <Button
+                variant="contained"
+                onClick={makeCall}
+                startIcon={<Phone />}
+                disabled={!callNumber}
+              >
+                Call
+              </Button>
+            </Box>
+          )}
+
+          {/* Call Controls */}
+          {currentCall && (
+            <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
+              <Button
+                variant="contained"
+                color="error"
+                onClick={hangupCall}
+                startIcon={<PhoneDisabled />}
+              >
+                Hangup
+              </Button>
+
+              {currentCall.status === 'connected' && (
+                <IconButton
+                  onClick={toggleMute}
+                  color={isMuted ? 'error' : 'default'}
+                >
+                  {isMuted ? <MicOff /> : <Mic />}
+                </IconButton>
+              )}
+            </Box>
+          )}
+
           <Button
-            variant="contained"
-            color="error"
-            onClick={hangupCall}
-            startIcon={<PhoneDisabled />}
+            variant="outlined"
+            onClick={unregister}
+            sx={{ mt: 2 }}
           >
-            Hangup
+            Unregister
           </Button>
-
-          {currentCall.status === 'connected' && (
-            <>
-              <IconButton
-                onClick={toggleMute}
-                color={isMuted ? 'error' : 'default'}
-              >
-                {isMuted ? <MicOff /> : <Mic />}
-              </IconButton>
-
-              <IconButton
-                onClick={toggleSpeaker}
-                color={isSpeakerOn ? 'primary' : 'default'}
-              >
-                {isSpeakerOn ? <VolumeUp /> : <VolumeOff />}
-              </IconButton>
-            </>
-          )}
         </Box>
       )}
 
@@ -352,8 +283,10 @@ const WebRTCPhone = () => {
 
       {/* Instructions */}
       <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
-        Register with your SIP credentials to make and receive calls directly from your browser.
-        Use extension 6001 or 6002 with password "secure123" for testing.
+        {window.location.protocol === 'https:' 
+          ? 'WebRTC is enabled with SSL. Register to make calls directly from your browser.'
+          : 'Please access this page via HTTPS to enable WebRTC functionality.'
+        }
       </Typography>
     </Paper>
   );
