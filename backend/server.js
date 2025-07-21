@@ -141,18 +141,26 @@ app.post('/api/call/originate', async (req, res) => {
     return res.status(400).json({ error: 'Self number and customer number are required' });
   }
   
+  // Validate 10-digit numbers
+  const phoneRegex = /^\d{10}$/;
+  if (!phoneRegex.test(selfNumber) || !phoneRegex.test(customerNumber)) {
+    return res.status(400).json({ error: 'Please enter valid 10-digit phone numbers' });
+  }
+  
   const callId = uuidv4();
   
   try {
+    // Use Local channel to handle the call flow
     const action = {
       action: 'originate',
-      channel: `PJSIP/${selfNumber}`,
-      context: 'default',
+      channel: `Local/${selfNumber}@outbound-calls`,
+      context: 'outbound-calls',
       exten: customerNumber,
       priority: 1,
-      callerid: selfNumber,
+      callerid: `"${selfNumber}" <${selfNumber}>`,
       timeout: 30000,
-      actionid: callId
+      actionid: callId,
+      variable: `CUSTOMER_NUMBER=${customerNumber},SELF_NUMBER=${selfNumber}`
     };
     
     ami.action(action, (err, res_ami) => {
@@ -167,7 +175,7 @@ app.post('/api/call/originate', async (req, res) => {
     res.json({ 
       success: true, 
       callId: callId,
-      message: 'Call initiated successfully'
+      message: `Call initiated from ${selfNumber} to ${customerNumber}`
     });
     
   } catch (error) {

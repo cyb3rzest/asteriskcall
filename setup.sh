@@ -112,7 +112,7 @@ EOF
 
 # Create recording directory
 mkdir -p /var/spool/asterisk/monitor
-chown asterisk:asterisk /var/spool/asterisk/monitor
+chown root:root /var/spool/asterisk/monitor
 chmod 755 /var/spool/asterisk/monitor
 
 # Restart Asterisk

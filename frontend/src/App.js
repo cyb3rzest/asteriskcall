@@ -39,7 +39,7 @@ const theme = createTheme({
 });
 
 function App() {
-  const [selfNumber, setSelfNumber] = useState('6001');
+  const [selfNumber, setSelfNumber] = useState('');
   const [customerNumber, setCustomerNumber] = useState('');
   const [activeCalls, setActiveCalls] = useState([]);
   const [socket, setSocket] = useState(null);
@@ -117,9 +117,41 @@ function App() {
     setNotification({ ...notification, open: false });
   };
 
+  const validatePhoneNumber = (number) => {
+    const phoneRegex = /^\d{10}$/;
+    return phoneRegex.test(number);
+  };
+
+  const formatPhoneNumber = (value) => {
+    // Remove all non-digits
+    const cleaned = value.replace(/\D/g, '');
+    // Limit to 10 digits
+    return cleaned.slice(0, 10);
+  };
+
+  const handleSelfNumberChange = (e) => {
+    const formatted = formatPhoneNumber(e.target.value);
+    setSelfNumber(formatted);
+  };
+
+  const handleCustomerNumberChange = (e) => {
+    const formatted = formatPhoneNumber(e.target.value);
+    setCustomerNumber(formatted);
+  };
+
   const makeCall = async () => {
     if (!selfNumber || !customerNumber) {
-      showNotification('Please enter both self number and customer number', 'error');
+      showNotification('Please enter both phone numbers', 'error');
+      return;
+    }
+
+    if (!validatePhoneNumber(selfNumber)) {
+      showNotification('Please enter a valid 10-digit self number', 'error');
+      return;
+    }
+
+    if (!validatePhoneNumber(customerNumber)) {
+      showNotification('Please enter a valid 10-digit customer number', 'error');
       return;
     }
 
@@ -130,11 +162,12 @@ function App() {
       });
 
       if (response.data.success) {
-        showNotification('Call initiated successfully', 'success');
+        showNotification(response.data.message, 'success');
       }
     } catch (error) {
       console.error('Error making call:', error);
-      showNotification('Failed to make call', 'error');
+      const errorMessage = error.response?.data?.error || 'Failed to make call';
+      showNotification(errorMessage, 'error');
     }
   };
 
@@ -206,10 +239,13 @@ function App() {
             <Grid item xs={12} sm={4}>
               <TextField
                 fullWidth
-                label="Self Number"
+                label="Self Number (Your Phone)"
                 value={selfNumber}
-                onChange={(e) => setSelfNumber(e.target.value)}
-                placeholder="e.g., 6001"
+                onChange={handleSelfNumberChange}
+                placeholder="e.g., 9876543210"
+                inputProps={{ maxLength: 10 }}
+                helperText={`${selfNumber.length}/10 digits`}
+                error={selfNumber.length > 0 && !validatePhoneNumber(selfNumber)}
               />
             </Grid>
             <Grid item xs={12} sm={4}>
@@ -217,8 +253,11 @@ function App() {
                 fullWidth
                 label="Customer Number"
                 value={customerNumber}
-                onChange={(e) => setCustomerNumber(e.target.value)}
-                placeholder="e.g., 6002"
+                onChange={handleCustomerNumberChange}
+                placeholder="e.g., 9123456789"
+                inputProps={{ maxLength: 10 }}
+                helperText={`${customerNumber.length}/10 digits`}
+                error={customerNumber.length > 0 && !validatePhoneNumber(customerNumber)}
               />
             </Grid>
             <Grid item xs={12} sm={4}>
