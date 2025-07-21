@@ -1,56 +1,31 @@
-# Asterisk Call Management System
+# Simple Browser Softphone with Asterisk ARI
 
-A complete call management system with React frontend and Node.js backend for Asterisk PBX.
+A lightweight browser-based softphone using Asterisk 22 ARI (Asterisk REST Interface).
 
 ## Features
-- Make outbound calls
-- Add self and customer numbers
-- Call hold functionality
-- Call recording
-- Real-time call status updates
+- Browser-based calling interface
+- Manual number entry (My Number + Customer Number)
+- Real-time call status display
+- Hold/Resume functionality
+- Hangup control
+- No SSL/domain requirements
+- Uses Asterisk ARI for modern REST API integration
 
-## Tech Stack
-- Frontend: React with Material-UI
-- Backend: Node.js with Express
-- PBX: Asterisk with PJSIP
-- WebSocket for real-time updates
+## Architecture
+- **Frontend**: React with Material-UI
+- **Backend**: Node.js with Express + Asterisk ARI
+- **PBX**: Asterisk 22 with PJSIP
+- **Communication**: REST API + WebSocket for real-time updates
 
-## Installation Guide
+## Quick Setup
 
-See INSTALLATION.md for complete setup instructions.
-
-## Quick Start
-
-### For Development
-1. Install dependencies: `npm run install-all`
-2. Start backend: `npm run server`
-3. Start frontend: `npm run client`
-4. Access at http://localhost:3000
-
-### For Production (Ubuntu 24)
 1. Run setup script: `sudo bash setup.sh`
-2. Access at http://YOUR_SERVER_IP
+2. Access via: `http://YOUR_SERVER_IP`
+3. Enter numbers and click "Dial Now"
 
-## Usage Guide
-
-### Making Calls
-1. Enter your extension number (e.g., 6001) in "Self Number"
-2. Enter the destination number in "Customer Number"
-3. Click "Dial Now" to initiate the call
-
-### Call Management
-- **Hold**: Put active calls on hold
-- **Resume**: Resume held calls
-- **Record**: Start recording active calls
-- **Hangup**: End active calls
-
-### Default Extensions
-- Extension 6001: Password `secure123`
-- Extension 6002: Password `secure123`
-
-### SIP Client Configuration
-Configure your SIP client with:
-- Server: YOUR_SERVER_IP:5060
-- Username: 6001 (or 6002)
-- Password: secure123
-- Transport: UDP/TCP
+## Usage
+1. **My Number**: Your phone number
+2. **Customer Number**: Number to call  
+3. **Dial Now**: Start the call
+4. **Hold/Resume**: Control call state
+5. **Hangup**: End call

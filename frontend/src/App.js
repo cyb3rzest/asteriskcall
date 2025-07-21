@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Container,
   Paper,
@@ -13,24 +13,20 @@ import {
   Chip,
   Alert,
   Snackbar,
-  Switch,
-  FormControlLabel,
-  Tabs,
-  Tab
+  LinearProgress
 } from '@mui/material';
 import {
   Phone,
   PhoneDisabled,
   Pause,
   PlayArrow,
-  FiberManualRecord,
-  Stop
+  CallMade,
+  CallReceived
 } from '@mui/icons-material';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import io from 'socket.io-client';
 import axios from 'axios';
-import WebRTCPhone from './WebRTCPhone';
 
 const theme = createTheme({
   palette: {
@@ -40,29 +36,31 @@ const theme = createTheme({
     secondary: {
       main: '#dc004e',
     },
+    background: {
+      default: 'transparent'
+    }
   },
 });
 
 function App() {
-  const [selfNumber, setSelfNumber] = useState('');
+  const [myNumber, setMyNumber] = useState('');
   const [customerNumber, setCustomerNumber] = useState('');
   const [activeCalls, setActiveCalls] = useState([]);
   const [socket, setSocket] = useState(null);
   const [notification, setNotification] = useState({ open: false, message: '', severity: 'info' });
-  const [useWebPhone, setUseWebPhone] = useState(false);
-  const webPhoneRef = useRef(null);
+  const [isDialing, setIsDialing] = useState(false);
 
   useEffect(() => {
     const newSocket = io(process.env.REACT_APP_SERVER_URL || 'http://localhost:3001');
     setSocket(newSocket);
 
     newSocket.on('connect', () => {
-      console.log('Connected to server');
-      showNotification('Connected to server', 'success');
+      console.log('✅ Connected to server');
+      showNotification('Connected to softphone server', 'success');
     });
 
     newSocket.on('disconnect', () => {
-      console.log('Disconnected from server');
+      console.log('❌ Disconnected from server');
       showNotification('Disconnected from server', 'warning');
     });
 
@@ -71,36 +69,34 @@ function App() {
     });
 
     newSocket.on('call-update', (update) => {
-      console.log('Call update:', update);
+      console.log('📞 Call update:', update);
       
       switch(update.type) {
-        case 'new-call':
+        case 'call-started':
           setActiveCalls(prev => [...prev, update.call]);
-          showNotification('New call initiated', 'info');
+          showNotification('Call started', 'info');
+          setIsDialing(false);
           break;
         case 'call-ended':
           setActiveCalls(prev => prev.filter(call => call.id !== update.call.id));
           showNotification('Call ended', 'info');
+          setIsDialing(false);
           break;
-        case 'call-dialing':
+        case 'call-state-changed':
           updateCall(update.call);
-          showNotification('Dialing...', 'info');
-          break;
-        case 'call-status-changed':
-          updateCall(update.call);
-          showNotification(`Call ${update.call.state}`, 'success');
+          showNotification(`Call ${update.call.state}`, 'info');
           break;
         case 'call-held':
           updateCall(update.call);
-          showNotification('Call put on hold', 'info');
+          showNotification('Call put on hold', 'warning');
           break;
-        case 'call-unheld':
+        case 'call-resumed':
           updateCall(update.call);
-          showNotification('Call resumed', 'info');
+          showNotification('Call resumed', 'success');
           break;
-        case 'recording-started':
+        case 'call-hangup':
           updateCall(update.call);
-          showNotification('Recording started', 'success');
+          showNotification('Call ending...', 'info');
           break;
         default:
           updateCall(update.call);
@@ -125,20 +121,17 @@ function App() {
   };
 
   const validatePhoneNumber = (number) => {
-    const phoneRegex = /^\d{10}$/;
-    return phoneRegex.test(number);
+    return /^\d{10}$/.test(number);
   };
 
   const formatPhoneNumber = (value) => {
-    // Remove all non-digits
     const cleaned = value.replace(/\D/g, '');
-    // Limit to 10 digits
     return cleaned.slice(0, 10);
   };
 
-  const handleSelfNumberChange = (e) => {
+  const handleMyNumberChange = (e) => {
     const formatted = formatPhoneNumber(e.target.value);
-    setSelfNumber(formatted);
+    setMyNumber(formatted);
   };
 
   const handleCustomerNumberChange = (e) => {
@@ -146,14 +139,14 @@ function App() {
     setCustomerNumber(formatted);
   };
 
-  const makeCall = async () => {
-    if (!selfNumber || !customerNumber) {
+  const dialCall = async () => {
+    if (!myNumber || !customerNumber) {
       showNotification('Please enter both phone numbers', 'error');
       return;
     }
 
-    if (!validatePhoneNumber(selfNumber)) {
-      showNotification('Please enter a valid 10-digit self number', 'error');
+    if (!validatePhoneNumber(myNumber)) {
+      showNotification('Please enter a valid 10-digit my number', 'error');
       return;
     }
 
@@ -162,9 +155,11 @@ function App() {
       return;
     }
 
+    setIsDialing(true);
+    
     try {
-      const response = await axios.post('/api/call/originate', {
-        selfNumber,
+      const response = await axios.post('/api/call/dial', {
+        myNumber,
         customerNumber
       });
 
@@ -172,93 +167,105 @@ function App() {
         showNotification(response.data.message, 'success');
       }
     } catch (error) {
-      console.error('Error making call:', error);
+      console.error('❌ Error making call:', error);
       const errorMessage = error.response?.data?.error || 'Failed to make call';
       showNotification(errorMessage, 'error');
+      setIsDialing(false);
     }
   };
 
-  const holdCall = async (callId) => {
+  const holdCall = async (channelId) => {
     try {
-      await axios.post(`/api/call/${callId}/hold`);
+      await axios.post(`/api/call/${channelId}/hold`);
     } catch (error) {
-      console.error('Error holding call:', error);
+      console.error('❌ Error holding call:', error);
       showNotification('Failed to hold call', 'error');
     }
   };
 
-  const unholdCall = async (callId) => {
+  const resumeCall = async (channelId) => {
     try {
-      await axios.post(`/api/call/${callId}/unhold`);
+      await axios.post(`/api/call/${channelId}/resume`);
     } catch (error) {
-      console.error('Error unholding call:', error);
+      console.error('❌ Error resuming call:', error);
       showNotification('Failed to resume call', 'error');
     }
   };
 
-  const hangupCall = async (callId) => {
+  const hangupCall = async (channelId) => {
     try {
-      await axios.post(`/api/call/${callId}/hangup`);
+      await axios.post(`/api/call/${channelId}/hangup`);
     } catch (error) {
-      console.error('Error hanging up call:', error);
+      console.error('❌ Error hanging up call:', error);
       showNotification('Failed to hangup call', 'error');
-    }
-  };
-
-  const startRecording = async (callId) => {
-    try {
-      const response = await axios.post(`/api/call/${callId}/record`);
-      if (response.data.success) {
-        showNotification(`Recording started: ${response.data.filename}`, 'success');
-      }
-    } catch (error) {
-      console.error('Error starting recording:', error);
-      showNotification('Failed to start recording', 'error');
     }
   };
 
   const getStatusColor = (state) => {
     switch(state) {
+      case 'started': return 'info';
       case 'ringing': return 'warning';
-      case 'dialing': return 'info';
-      case 'answered': return 'success';
+      case 'up': return 'success';
       case 'hold': return 'secondary';
       case 'ended': return 'default';
-      case 'failed': return 'error';
+      case 'hangup': return 'error';
       default: return 'default';
+    }
+  };
+
+  const getStatusText = (state) => {
+    switch(state) {
+      case 'started': return 'STARTING';
+      case 'ringing': return 'RINGING';
+      case 'up': return 'CONNECTED';
+      case 'hold': return 'ON HOLD';
+      case 'ended': return 'ENDED';
+      case 'hangup': return 'HANGING UP';
+      default: return state?.toUpperCase() || 'UNKNOWN';
     }
   };
 
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      <Container maxWidth="lg" sx={{ py: 4 }}>
-        <Typography variant="h3" component="h1" gutterBottom align="center">
-          Asterisk Call Management System
+      <Container maxWidth="md" sx={{ py: 4 }}>
+        <Typography variant="h3" component="h1" gutterBottom align="center" color="white">
+          📞 Simple Softphone
+        </Typography>
+        <Typography variant="subtitle1" align="center" color="white" sx={{ mb: 4 }}>
+          Browser-based calling with Asterisk ARI
         </Typography>
 
-        {/* WebRTC Phone Component */}
-        <WebRTCPhone />
-
-        {/* Call Initiation Form */}
-        <Paper elevation={3} sx={{ p: 3, mb: 4 }}>
-          <Typography variant="h5" gutterBottom>
+        {/* Dialing Form */}
+        <Paper elevation={6} sx={{ p: 4, mb: 4, borderRadius: 3 }}>
+          <Typography variant="h5" gutterBottom color="primary">
             Make a Call
           </Typography>
-          <Grid container spacing={2} alignItems="center">
-            <Grid item xs={12} sm={4}>
+          
+          {isDialing && (
+            <Box sx={{ mb: 2 }}>
+              <LinearProgress />
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                Initiating call...
+              </Typography>
+            </Box>
+          )}
+          
+          <Grid container spacing={3} alignItems="center">
+            <Grid item xs={12} sm={5}>
               <TextField
                 fullWidth
-                label="Self Number (Your Phone)"
-                value={selfNumber}
-                onChange={handleSelfNumberChange}
+                label="My Number"
+                value={myNumber}
+                onChange={handleMyNumberChange}
                 placeholder="e.g., 9876543210"
                 inputProps={{ maxLength: 10 }}
-                helperText={`${selfNumber.length}/10 digits`}
-                error={selfNumber.length > 0 && !validatePhoneNumber(selfNumber)}
+                helperText={`${myNumber.length}/10 digits`}
+                error={myNumber.length > 0 && !validatePhoneNumber(myNumber)}
+                disabled={isDialing}
               />
             </Grid>
-            <Grid item xs={12} sm={4}>
+            <Grid item xs={12} sm={5}>
               <TextField
                 fullWidth
                 label="Customer Number"
@@ -268,16 +275,18 @@ function App() {
                 inputProps={{ maxLength: 10 }}
                 helperText={`${customerNumber.length}/10 digits`}
                 error={customerNumber.length > 0 && !validatePhoneNumber(customerNumber)}
+                disabled={isDialing}
               />
             </Grid>
-            <Grid item xs={12} sm={4}>
+            <Grid item xs={12} sm={2}>
               <Button
                 fullWidth
                 variant="contained"
                 size="large"
                 startIcon={<Phone />}
-                onClick={makeCall}
-                disabled={!selfNumber || !customerNumber}
+                onClick={dialCall}
+                disabled={!myNumber || !customerNumber || isDialing}
+                sx={{ height: 56 }}
               >
                 Dial Now
               </Button>
@@ -285,44 +294,13 @@ function App() {
           </Grid>
         </Paper>
 
-        {/* WebRTC Phone Component */}
-        <Box mb={4}>
-          <FormControlLabel
-            control={
-              <Switch
-                checked={useWebPhone}
-                onChange={(e) => setUseWebPhone(e.target.checked)}
-                color="primary"
-              />
-            }
-            label="Enable Web Phone (Talk directly from browser)"
-          />
-          
-          {useWebPhone && (
-            <WebRTCPhone
-              ref={webPhoneRef}
-              onCallStatusChange={(status, number) => {
-                console.log('WebRTC call status:', status, number);
-                if (status === 'connected') {
-                  showNotification(`Web call connected to ${number}`, 'success');
-                } else if (status === 'ended') {
-                  showNotification('Web call ended', 'info');
-                }
-              }}
-              onMakeCall={makeCall}
-              selfNumber={selfNumber}
-              customerNumber={customerNumber}
-            />
-          )}
-        </Box>
-
         {/* Active Calls */}
-        <Typography variant="h5" gutterBottom>
+        <Typography variant="h5" gutterBottom color="white">
           Active Calls ({activeCalls.length})
         </Typography>
 
         {activeCalls.length === 0 ? (
-          <Paper elevation={1} sx={{ p: 3, textAlign: 'center' }}>
+          <Paper elevation={3} sx={{ p: 3, textAlign: 'center', borderRadius: 2 }}>
             <Typography variant="body1" color="text.secondary">
               No active calls
             </Typography>
@@ -330,83 +308,64 @@ function App() {
         ) : (
           <Grid container spacing={2}>
             {activeCalls.map((call) => (
-              <Grid item xs={12} md={6} key={call.id}>
-                <Card elevation={2}>
+              <Grid item xs={12} key={call.id}>
+                <Card elevation={4} sx={{ borderRadius: 2 }}>
                   <CardContent>
                     <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
                       <Typography variant="h6">
-                        Call {call.callerIdNum || 'Unknown'}
+                        📞 {call.callerNumber || 'Unknown'}
                       </Typography>
                       <Chip 
-                        label={call.state.toUpperCase()} 
+                        label={getStatusText(call.state)} 
                         color={getStatusColor(call.state)}
                         size="small"
                       />
                     </Box>
                     
                     <Typography variant="body2" color="text.secondary" gutterBottom>
-                      Channel: {call.channel}
+                      Channel: {call.channelId}
                     </Typography>
-                    
-                    {call.destination && (
-                      <Typography variant="body2" color="text.secondary" gutterBottom>
-                        Destination: {call.destination}
-                      </Typography>
-                    )}
                     
                     <Typography variant="body2" color="text.secondary" gutterBottom>
                       Started: {new Date(call.startTime).toLocaleTimeString()}
                     </Typography>
                     
-                    {call.recording && (
-                      <Box display="flex" alignItems="center" mt={1}>
-                        <FiberManualRecord color="error" sx={{ mr: 1, fontSize: 16 }} />
-                        <Typography variant="body2" color="error">
-                          Recording: {call.recording.filename}
-                        </Typography>
-                      </Box>
+                    {call.args && call.args.length > 0 && (
+                      <Typography variant="body2" color="text.secondary" gutterBottom>
+                        Call ID: {call.args[0]}
+                      </Typography>
                     )}
                   </CardContent>
                   
                   <CardActions>
-                    {call.state === 'answered' && (
-                      <>
-                        <Button
-                          size="small"
-                          startIcon={<Pause />}
-                          onClick={() => holdCall(call.id)}
-                        >
-                          Hold
-                        </Button>
-                        {!call.recording && (
-                          <Button
-                            size="small"
-                            startIcon={<FiberManualRecord />}
-                            color="error"
-                            onClick={() => startRecording(call.id)}
-                          >
-                            Record
-                          </Button>
-                        )}
-                      </>
+                    {call.state === 'up' && (
+                      <Button
+                        size="small"
+                        startIcon={<Pause />}
+                        onClick={() => holdCall(call.channelId)}
+                        color="warning"
+                      >
+                        Hold
+                      </Button>
                     )}
                     
                     {call.state === 'hold' && (
                       <Button
                         size="small"
                         startIcon={<PlayArrow />}
-                        onClick={() => unholdCall(call.id)}
+                        onClick={() => resumeCall(call.channelId)}
+                        color="success"
                       >
                         Resume
                       </Button>
                     )}
                     
-                    {['answered', 'hold', 'dialing', 'ringing'].includes(call.state) && (
+                    {['started', 'ringing', 'up', 'hold'].includes(call.state) && (
                       <Button
                         size="small"
                         startIcon={<PhoneDisabled />}
                         color="error"
-                        onClick={() => hangupCall(call.id)}
+                        onClick={() => hangupCall(call.channelId)}
                       >
                         Hangup
                       </Button>

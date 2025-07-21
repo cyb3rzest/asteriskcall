@@ -1,11 +1,7 @@
 #!/bin/bash
 
-# Asterisk Call Management System Setup Script
-# Run this script as root on Ubuntu 24
-
-set -e
-
-echo "🚀 Starting Asterisk Call Management System Setup..."
+# Simple Softphone Setup Script using Asterisk ARI
+echo "🚀 Setting up Simple Browser Softphone with Asterisk ARI..."
 
 # Colors for output
 RED='\033[0;31m'
@@ -13,7 +9,6 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-# Function to print colored output
 print_status() {
     echo -e "${GREEN}[INFO]${NC} $1"
 }
@@ -47,25 +42,24 @@ npm install -g pm2
 
 # Install additional dependencies
 print_status "Installing additional dependencies..."
-apt install -y git build-essential python3-dev nginx
+apt install -y git build-essential nginx
 
 # Create application directory
 print_status "Setting up application directory..."
-mkdir -p /opt/asterisk-call-system
-cd /opt/asterisk-call-system
+mkdir -p /opt/simple-softphone
+
+# Copy project files from current directory to /opt/simple-softphone
+print_status "Copying project files..."
+cp -r * /opt/simple-softphone/ 2>/dev/null || true
+cd /opt/simple-softphone
 
 # Install dependencies
 print_status "Installing application dependencies..."
-npm install
+npm run install-all
 
-# Install backend dependencies
-cd backend
-npm install
-cd ..
-
-# Install frontend dependencies
+# Build frontend
+print_status "Building frontend..."
 cd frontend
-npm install
 npm run build
 cd ..
 
@@ -74,10 +68,9 @@ print_status "Creating environment configuration..."
 cat > backend/.env << EOF
 PORT=3001
 ASTERISK_HOST=127.0.0.1
-ASTERISK_PORT=5038
-ASTERISK_USERNAME=admin
-ASTERISK_PASSWORD=CallSystem2024!
-RECORDING_PATH=/var/spool/asterisk/monitor
+ARI_PORT=8088
+ARI_USERNAME=asterisk
+ARI_PASSWORD=asterisk
 EOF
 
 # Create logs directory
@@ -87,48 +80,45 @@ mkdir -p logs
 print_status "Configuring Asterisk..."
 
 # Backup existing configs
-cp /etc/asterisk/pjsip.conf /etc/asterisk/pjsip.conf.backup 2>/dev/null || true
+cp /etc/asterisk/ari.conf /etc/asterisk/ari.conf.backup 2>/dev/null || true
 cp /etc/asterisk/extensions.conf /etc/asterisk/extensions.conf.backup 2>/dev/null || true
-cp /etc/asterisk/manager.conf /etc/asterisk/manager.conf.backup 2>/dev/null || true
+cp /etc/asterisk/http.conf /etc/asterisk/http.conf.backup 2>/dev/null || true
+cp /etc/asterisk/pjsip.conf /etc/asterisk/pjsip.conf.backup 2>/dev/null || true
+cp /etc/asterisk/modules.conf /etc/asterisk/modules.conf.backup 2>/dev/null || true
 
 # Copy new configurations
-cp asterisk-configs/pjsip.conf /etc/asterisk/
+cp asterisk-configs/ari.conf /etc/asterisk/
 cp asterisk-configs/extensions.conf /etc/asterisk/
+cp asterisk-configs/pjsip.conf /etc/asterisk/
+cp asterisk-configs/modules.conf /etc/asterisk/
 
-# Configure manager interface
-cat > /etc/asterisk/manager.conf << EOF
+# Configure HTTP interface for ARI
+cat > /etc/asterisk/http.conf << EOF
 [general]
-enabled = yes
-port = 5038
-bindaddr = 127.0.0.1
-webenabled = yes
-
-[admin]
-secret = CallSystem2024!
-permit = 127.0.0.1/255.255.255.0
-read = all
-write = all
+enabled=yes
+bindaddr=0.0.0.0
+bindport=8088
+prefix=asterisk
+enablestatic=yes
 EOF
-
-# Create recording directory
-mkdir -p /var/spool/asterisk/monitor
-chown root:root /var/spool/asterisk/monitor
-chmod 755 /var/spool/asterisk/monitor
 
 # Restart Asterisk
 print_status "Restarting Asterisk..."
 systemctl restart asterisk
 systemctl enable asterisk
 
+# Wait for Asterisk to start
+sleep 5
+
 # Setup Nginx
 print_status "Configuring Nginx..."
-cat > /etc/nginx/sites-available/asterisk-call << EOF
+cat > /etc/nginx/sites-available/simple-softphone << EOF
 server {
     listen 80;
     server_name _;
     
     location / {
-        root /opt/asterisk-call-system/frontend/build;
+        root /opt/simple-softphone/frontend/build;
         try_files \$uri \$uri/ /index.html;
     }
     
@@ -152,7 +142,7 @@ server {
 EOF
 
 # Enable nginx site
-ln -sf /etc/nginx/sites-available/asterisk-call /etc/nginx/sites-enabled/
+ln -sf /etc/nginx/sites-available/simple-softphone /etc/nginx/sites-enabled/
 rm -f /etc/nginx/sites-enabled/default
 nginx -t && systemctl restart nginx
 systemctl enable nginx
@@ -162,10 +152,33 @@ print_status "Configuring firewall..."
 ufw --force reset
 ufw allow 22/tcp
 ufw allow 80/tcp
-ufw allow 443/tcp
-ufw allow 5060/udp
-ufw allow 5060/tcp
+ufw allow 8088/tcp  # ARI HTTP
+ufw allow 5060/udp  # SIP
+ufw allow 5060/tcp  # SIP
 ufw --force enable
+
+# Create PM2 ecosystem file
+cat > ecosystem.config.js << EOF
+module.exports = {
+  apps: [{
+    name: 'simple-softphone',
+    script: './backend/server.js',
+    cwd: '/opt/simple-softphone',
+    instances: 1,
+    autorestart: true,
+    watch: false,
+    max_memory_restart: '1G',
+    env: {
+      NODE_ENV: 'production',
+      PORT: 3001
+    },
+    error_file: './logs/err.log',
+    out_file: './logs/out.log',
+    log_file: './logs/combined.log',
+    time: true
+  }]
+};
+EOF
 
 # Start application with PM2
 print_status "Starting application..."
@@ -173,28 +186,30 @@ pm2 start ecosystem.config.js
 pm2 save
 pm2 startup systemd -u root --hp /root
 
-print_status "Setup completed successfully!"
+print_status "✅ Setup completed successfully!"
 echo ""
-echo "🎉 Asterisk Call Management System is now running!"
+echo "🎉 Simple Softphone is now running!"
 echo ""
 echo "📋 System Information:"
 echo "   - Web Interface: http://$(curl -s ifconfig.me || echo 'YOUR_SERVER_IP')"
 echo "   - Backend API: http://localhost:3001"
-echo "   - Asterisk Manager: localhost:5038"
+echo "   - Asterisk ARI: http://localhost:8088/ari"
 echo ""
-echo "🔧 Default Extensions:"
-echo "   - Extension 6001: Password 'secure123'"
-echo "   - Extension 6002: Password 'secure123'"
+echo "📱 How to use:"
+echo "   1. Open web interface in browser"
+echo "   2. Enter 'My Number' (your phone number)"
+echo "   3. Enter 'Customer Number' (number to call)"
+echo "   4. Click 'Dial Now' to make the call"
+echo "   5. Use Hold/Resume/Hangup buttons to control call"
 echo ""
-echo "📊 Monitoring Commands:"
-echo "   - Check PM2 status: pm2 status"
-echo "   - Check application logs: pm2 logs asterisk-call-backend"
-echo "   - Check Asterisk status: asterisk -rx 'core show version'"
-echo "   - Check active calls: asterisk -rx 'core show channels'"
+echo "🧪 Testing:"
+echo "   - Check ARI status: curl http://localhost:8088/ari/asterisk/info"
+echo "   - Check application: curl http://localhost:3001/api/health"
+echo "   - Monitor logs: pm2 logs simple-softphone"
 echo ""
-echo "🔍 Troubleshooting:"
-echo "   - Asterisk logs: tail -f /var/log/asterisk/full"
-echo "   - Nginx logs: tail -f /var/log/nginx/error.log"
-echo "   - System logs: journalctl -u asterisk -f"
+echo "🔧 Monitoring Commands:"
+echo "   - PM2 status: pm2 status"
+echo "   - Asterisk CLI: asterisk -rvv"
+echo "   - Check calls: asterisk -rx 'core show channels'"
 echo ""
-print_warning "Please test the system by accessing the web interface and making a test call!"
+print_status "Your simple softphone is ready to use!"

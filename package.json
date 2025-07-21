@@ -1,7 +1,7 @@
 {
-  "name": "asterisk-call-system",
+  "name": "simple-browser-softphone",
   "version": "1.0.0",
-  "description": "Asterisk Call Management System",
+  "description": "Simple browser-based softphone for Asterisk 22",
   "scripts": {
     "server": "cd backend && npm start",
     "client": "cd frontend && npm start",

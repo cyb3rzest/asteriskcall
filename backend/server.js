@@ -2,7 +2,8 @@ const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
 const cors = require('cors');
-const AsteriskManager = require('asterisk-manager');
+const axios = require('axios');
+const WebSocket = require('ws');
 const { v4: uuidv4 } = require('uuid');
 require('dotenv').config();
 
@@ -19,73 +20,111 @@ const io = socketIo(server, {
 app.use(cors());
 app.use(express.json());
 
-// Asterisk Manager Interface
-const ami = new AsteriskManager(
-  process.env.ASTERISK_PORT || 5038,
-  process.env.ASTERISK_HOST || '127.0.0.1',
-  process.env.ASTERISK_USERNAME || 'admin',
-  process.env.ASTERISK_PASSWORD || 'admin',
-  true
-);
+// Asterisk ARI Configuration
+const ARI_CONFIG = {
+  host: process.env.ASTERISK_HOST || 'localhost',
+  port: process.env.ARI_PORT || 8088,
+  username: process.env.ARI_USERNAME || 'asterisk',
+  password: process.env.ARI_PASSWORD || 'asterisk',
+  app: 'softphone'
+};
+
+const ARI_BASE_URL = `http://${ARI_CONFIG.host}:${ARI_CONFIG.port}/ari`;
+const ARI_WS_URL = `ws://${ARI_CONFIG.host}:${ARI_CONFIG.port}/ari/events?app=${ARI_CONFIG.app}&api_key=${ARI_CONFIG.username}:${ARI_CONFIG.password}`;
 
 // Store active calls
 const activeCalls = new Map();
+let ariWebSocket = null;
 
-// Connect to Asterisk
-ami.keepConnected();
-
-ami.on('connect', () => {
-  console.log('Connected to Asterisk Manager Interface');
+// ARI HTTP client
+const ariClient = axios.create({
+  baseURL: ARI_BASE_URL,
+  auth: {
+    username: ARI_CONFIG.username,
+    password: ARI_CONFIG.password
+  },
+  timeout: 10000
 });
 
-ami.on('error', (err) => {
-  console.error('AMI Error:', err);
-});
-
-// Handle AMI events
-ami.on('managerevent', (evt) => {
-  console.log('AMI Event:', evt.event);
+// Connect to ARI WebSocket for events
+function connectAriWebSocket() {
+  console.log('🔌 Connecting to ARI WebSocket...');
   
-  switch(evt.event) {
-    case 'Newchannel':
-      handleNewChannel(evt);
+  ariWebSocket = new WebSocket(ARI_WS_URL);
+  
+  ariWebSocket.on('open', () => {
+    console.log('✅ Connected to Asterisk ARI WebSocket');
+  });
+  
+  ariWebSocket.on('message', (data) => {
+    try {
+      const event = JSON.parse(data);
+      handleAriEvent(event);
+    } catch (err) {
+      console.error('❌ Error parsing ARI event:', err);
+    }
+  });
+  
+  ariWebSocket.on('close', () => {
+    console.log('🔌 ARI WebSocket disconnected. Reconnecting...');
+    setTimeout(connectAriWebSocket, 5000);
+  });
+  
+  ariWebSocket.on('error', (err) => {
+    console.error('❌ ARI WebSocket error:', err);
+  });
+}
+
+// Handle ARI events
+function handleAriEvent(event) {
+  console.log('📞 ARI Event:', event.type);
+  
+  switch(event.type) {
+    case 'StasisStart':
+      handleStasisStart(event);
       break;
-    case 'Hangup':
-      handleHangup(evt);
+    case 'StasisEnd':
+      handleStasisEnd(event);
       break;
-    case 'DialBegin':
-      handleDialBegin(evt);
+    case 'ChannelStateChange':
+      handleChannelStateChange(event);
       break;
-    case 'DialEnd':
-      handleDialEnd(evt);
+    case 'ChannelHangupRequest':
+      handleChannelHangup(event);
       break;
   }
   
   // Broadcast event to all connected clients
-  io.emit('asterisk-event', evt);
-});
+  io.emit('ari-event', event);
+}
 
-function handleNewChannel(evt) {
-  const callId = evt.uniqueid;
-  activeCalls.set(callId, {
+function handleStasisStart(event) {
+  const channel = event.channel;
+  const callId = channel.id;
+  
+  const call = {
     id: callId,
-    channel: evt.channel,
-    state: 'ringing',
+    channelId: channel.id,
+    state: 'started',
     startTime: new Date(),
-    callerIdNum: evt.calleridnum,
-    callerIdName: evt.calleridname
-  });
+    callerNumber: channel.caller.number,
+    callerName: channel.caller.name,
+    args: event.args || []
+  };
+  
+  activeCalls.set(callId, call);
   
   io.emit('call-update', {
-    type: 'new-call',
-    call: activeCalls.get(callId)
+    type: 'call-started',
+    call: call
   });
 }
 
-function handleHangup(evt) {
-  const callId = evt.uniqueid;
-  if (activeCalls.has(callId)) {
-    const call = activeCalls.get(callId);
+function handleStasisEnd(event) {
+  const channelId = event.channel.id;
+  
+  if (activeCalls.has(channelId)) {
+    const call = activeCalls.get(channelId);
     call.state = 'ended';
     call.endTime = new Date();
     
@@ -94,238 +133,207 @@ function handleHangup(evt) {
       call: call
     });
     
-    activeCalls.delete(callId);
+    activeCalls.delete(channelId);
   }
 }
 
-function handleDialBegin(evt) {
-  const callId = evt.uniqueid;
-  if (activeCalls.has(callId)) {
-    const call = activeCalls.get(callId);
-    call.state = 'dialing';
-    call.destination = evt.dialstring;
+function handleChannelStateChange(event) {
+  const channelId = event.channel.id;
+  
+  if (activeCalls.has(channelId)) {
+    const call = activeCalls.get(channelId);
+    call.state = event.channel.state.toLowerCase();
     
     io.emit('call-update', {
-      type: 'call-dialing',
+      type: 'call-state-changed',
       call: call
     });
   }
 }
 
-function handleDialEnd(evt) {
-  const callId = evt.uniqueid;
-  if (activeCalls.has(callId)) {
-    const call = activeCalls.get(callId);
-    call.state = evt.dialstatus === 'ANSWER' ? 'answered' : 'failed';
+function handleChannelHangup(event) {
+  const channelId = event.channel.id;
+  
+  if (activeCalls.has(channelId)) {
+    const call = activeCalls.get(channelId);
+    call.state = 'hangup';
     
     io.emit('call-update', {
-      type: 'call-status-changed',
+      type: 'call-hangup',
       call: call
     });
   }
 }
 
 // API Routes
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'OK', timestamp: new Date().toISOString() });
+app.get('/api/health', async (req, res) => {
+  try {
+    const response = await ariClient.get('/asterisk/info');
+    res.json({ 
+      status: 'OK', 
+      timestamp: new Date().toISOString(),
+      asterisk: response.data
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      status: 'ERROR', 
+      error: 'Cannot connect to Asterisk ARI',
+      timestamp: new Date().toISOString()
+    });
+  }
 });
 
 app.get('/api/calls', (req, res) => {
   res.json(Array.from(activeCalls.values()));
 });
 
-app.post('/api/call/originate', async (req, res) => {
-  const { selfNumber, customerNumber } = req.body;
+// Originate a call using ARI
+app.post('/api/call/dial', async (req, res) => {
+  const { myNumber, customerNumber } = req.body;
   
-  if (!selfNumber || !customerNumber) {
-    return res.status(400).json({ error: 'Self number and customer number are required' });
-  }
-  
-  // Validate 10-digit numbers
-  const phoneRegex = /^\d{10}$/;
-  if (!phoneRegex.test(selfNumber) || !phoneRegex.test(customerNumber)) {
-    return res.status(400).json({ error: 'Please enter valid 10-digit phone numbers' });
+  if (!myNumber || !customerNumber) {
+    return res.status(400).json({ 
+      success: false,
+      error: 'Both my number and customer number are required' 
+    });
   }
   
   const callId = uuidv4();
   
   try {
-    // Use Local channel to handle the call flow
-    const action = {
-      action: 'originate',
-      channel: `Local/${selfNumber}@outbound-calls`,
-      context: 'outbound-calls',
-      exten: customerNumber,
-      priority: 1,
-      callerid: `"${selfNumber}" <${selfNumber}>`,
-      timeout: 30000,
-      actionid: callId,
-      variable: `CUSTOMER_NUMBER=${customerNumber},SELF_NUMBER=${selfNumber}`
-    };
-    
-    ami.action(action, (err, res_ami) => {
-      if (err) {
-        console.error('Originate error:', err);
-        return res.status(500).json({ error: 'Failed to originate call' });
-      }
-      
-      console.log('Call originated:', res_ami);
+    // Originate call using ARI
+    const response = await ariClient.post('/channels', {
+      endpoint: `PJSIP/${customerNumber}@tbitel`,
+      app: ARI_CONFIG.app,
+      appArgs: [callId, myNumber, customerNumber],
+      callerId: myNumber,
+      timeout: 30
     });
+    
+    const channel = response.data;
     
     res.json({ 
       success: true, 
-      callId: callId,
-      message: `Call initiated from ${selfNumber} to ${customerNumber}`
+      callId: channel.id,
+      channelId: channel.id,
+      message: `Call initiated from ${myNumber} to ${customerNumber}`,
+      myNumber: myNumber,
+      customerNumber: customerNumber
     });
     
   } catch (error) {
-    console.error('Error originating call:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-app.post('/api/call/:callId/hold', (req, res) => {
-  const { callId } = req.params;
-  const call = activeCalls.get(callId);
-  
-  if (!call) {
-    return res.status(404).json({ error: 'Call not found' });
-  }
-  
-  const action = {
-    action: 'redirect',
-    channel: call.channel,
-    context: 'default',
-    exten: 'hold',
-    priority: 1
-  };
-  
-  ami.action(action, (err, res_ami) => {
-    if (err) {
-      console.error('Hold error:', err);
-      return res.status(500).json({ error: 'Failed to hold call' });
-    }
-    
-    call.state = 'hold';
-    io.emit('call-update', {
-      type: 'call-held',
-      call: call
+    console.error('❌ Error originating call:', error.response?.data || error.message);
+    res.status(500).json({ 
+      success: false,
+      error: error.response?.data?.message || 'Failed to originate call'
     });
-    
-    res.json({ success: true, message: 'Call put on hold' });
-  });
+  }
 });
 
-app.post('/api/call/:callId/unhold', (req, res) => {
-  const { callId } = req.params;
-  const call = activeCalls.get(callId);
+// Hold a call
+app.post('/api/call/:channelId/hold', async (req, res) => {
+  const { channelId } = req.params;
   
-  if (!call) {
-    return res.status(404).json({ error: 'Call not found' });
-  }
-  
-  const action = {
-    action: 'redirect',
-    channel: call.channel,
-    context: 'default',
-    exten: call.destination || '6001',
-    priority: 1
-  };
-  
-  ami.action(action, (err, res_ami) => {
-    if (err) {
-      console.error('Unhold error:', err);
-      return res.status(500).json({ error: 'Failed to unhold call' });
+  try {
+    // Put channel on hold using ARI
+    await ariClient.post(`/channels/${channelId}/hold`);
+    
+    if (activeCalls.has(channelId)) {
+      const call = activeCalls.get(channelId);
+      call.state = 'hold';
+      
+      io.emit('call-update', {
+        type: 'call-held',
+        call: call
+      });
     }
-    
-    call.state = 'answered';
-    io.emit('call-update', {
-      type: 'call-unheld',
-      call: call
-    });
-    
-    res.json({ success: true, message: 'Call resumed' });
-  });
-});
-
-app.post('/api/call/:callId/hangup', (req, res) => {
-  const { callId } = req.params;
-  const call = activeCalls.get(callId);
-  
-  if (!call) {
-    return res.status(404).json({ error: 'Call not found' });
-  }
-  
-  const action = {
-    action: 'hangup',
-    channel: call.channel
-  };
-  
-  ami.action(action, (err, res_ami) => {
-    if (err) {
-      console.error('Hangup error:', err);
-      return res.status(500).json({ error: 'Failed to hangup call' });
-    }
-    
-    res.json({ success: true, message: 'Call ended' });
-  });
-});
-
-app.post('/api/call/:callId/record', (req, res) => {
-  const { callId } = req.params;
-  const call = activeCalls.get(callId);
-  
-  if (!call) {
-    return res.status(404).json({ error: 'Call not found' });
-  }
-  
-  const filename = `recording_${callId}_${Date.now()}`;
-  
-  const action = {
-    action: 'monitor',
-    channel: call.channel,
-    file: filename,
-    format: 'wav',
-    mix: 'true'
-  };
-  
-  ami.action(action, (err, res_ami) => {
-    if (err) {
-      console.error('Record error:', err);
-      return res.status(500).json({ error: 'Failed to start recording' });
-    }
-    
-    call.recording = {
-      filename: filename,
-      startTime: new Date()
-    };
-    
-    io.emit('call-update', {
-      type: 'recording-started',
-      call: call
-    });
     
     res.json({ 
       success: true, 
-      message: 'Recording started',
-      filename: filename
+      message: 'Call put on hold' 
     });
-  });
+    
+  } catch (error) {
+    console.error('❌ Hold error:', error.response?.data || error.message);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to hold call' 
+    });
+  }
+});
+
+// Resume a call
+app.post('/api/call/:channelId/resume', async (req, res) => {
+  const { channelId } = req.params;
+  
+  try {
+    // Remove hold using ARI
+    await ariClient.delete(`/channels/${channelId}/hold`);
+    
+    if (activeCalls.has(channelId)) {
+      const call = activeCalls.get(channelId);
+      call.state = 'up';
+      
+      io.emit('call-update', {
+        type: 'call-resumed',
+        call: call
+      });
+    }
+    
+    res.json({ 
+      success: true, 
+      message: 'Call resumed' 
+    });
+    
+  } catch (error) {
+    console.error('❌ Resume error:', error.response?.data || error.message);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to resume call' 
+    });
+  }
+});
+
+// Hangup a call
+app.post('/api/call/:channelId/hangup', async (req, res) => {
+  const { channelId } = req.params;
+  
+  try {
+    // Hangup channel using ARI
+    await ariClient.delete(`/channels/${channelId}`);
+    
+    res.json({ 
+      success: true, 
+      message: 'Call ended' 
+    });
+    
+  } catch (error) {
+    console.error('❌ Hangup error:', error.response?.data || error.message);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to hangup call' 
+    });
+  }
 });
 
 // Socket.IO connection handling
 io.on('connection', (socket) => {
-  console.log('Client connected:', socket.id);
+  console.log('🔌 Client connected:', socket.id);
   
   // Send current active calls to new client
   socket.emit('active-calls', Array.from(activeCalls.values()));
   
   socket.on('disconnect', () => {
-    console.log('Client disconnected:', socket.id);
+    console.log('🔌 Client disconnected:', socket.id);
   });
 });
 
+// Initialize ARI connection
+connectAriWebSocket();
+
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`🚀 Softphone server running on port ${PORT}`);
+  console.log(`📱 Access your softphone at: http://localhost:${PORT}`);
+  console.log(`🔗 ARI URL: ${ARI_BASE_URL}`);
 });
