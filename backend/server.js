@@ -24,13 +24,13 @@ app.use(express.json());
 const ARI_CONFIG = {
   host: process.env.ASTERISK_HOST || 'localhost',
   port: process.env.ARI_PORT || 8088,
-  username: process.env.ARI_USERNAME || 'asterisk',
-  password: process.env.ARI_PASSWORD || 'asterisk',
+  username: process.env.ARI_USERNAME || 'softphone',
+  password: process.env.ARI_PASSWORD || 'softphone123',
   app: 'softphone'
 };
 
-const ARI_BASE_URL = `http://${ARI_CONFIG.host}:${ARI_CONFIG.port}/ari`;
-const ARI_WS_URL = `ws://${ARI_CONFIG.host}:${ARI_CONFIG.port}/ari/events?app=${ARI_CONFIG.app}&api_key=${ARI_CONFIG.username}:${ARI_CONFIG.password}`;
+const ARI_BASE_URL = `http://${ARI_CONFIG.host}:${ARI_CONFIG.port}/asterisk/ari`;
+const ARI_WS_URL = `ws://${ARI_CONFIG.host}:${ARI_CONFIG.port}/asterisk/ari/events?app=${ARI_CONFIG.app}&api_key=${ARI_CONFIG.username}:${ARI_CONFIG.password}`;
 
 // Store active calls
 const activeCalls = new Map();

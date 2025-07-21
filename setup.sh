@@ -69,8 +69,8 @@ cat > backend/.env << EOF
 PORT=3001
 ASTERISK_HOST=127.0.0.1
 ARI_PORT=8088
-ARI_USERNAME=asterisk
-ARI_PASSWORD=asterisk
+ARI_USERNAME=softphone
+ARI_PASSWORD=softphone123
 EOF
 
 # Create logs directory
@@ -193,7 +193,7 @@ echo ""
 echo "📋 System Information:"
 echo "   - Web Interface: http://$(curl -s ifconfig.me || echo 'YOUR_SERVER_IP')"
 echo "   - Backend API: http://localhost:3001"
-echo "   - Asterisk ARI: http://localhost:8088/ari"
+echo "   - Asterisk ARI: http://localhost:8088/asterisk/ari"
 echo ""
 echo "📱 How to use:"
 echo "   1. Open web interface in browser"
