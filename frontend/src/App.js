@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Container,
   Paper,
@@ -12,7 +12,11 @@ import {
   Grid,
   Chip,
   Alert,
-  Snackbar
+  Snackbar,
+  Switch,
+  FormControlLabel,
+  Tabs,
+  Tab
 } from '@mui/material';
 import {
   Phone,
@@ -26,6 +30,7 @@ import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import io from 'socket.io-client';
 import axios from 'axios';
+import WebRTCPhone from './WebRTCPhone';
 
 const theme = createTheme({
   palette: {
@@ -44,6 +49,8 @@ function App() {
   const [activeCalls, setActiveCalls] = useState([]);
   const [socket, setSocket] = useState(null);
   const [notification, setNotification] = useState({ open: false, message: '', severity: 'info' });
+  const [useWebPhone, setUseWebPhone] = useState(false);
+  const webPhoneRef = useRef(null);
 
   useEffect(() => {
     const newSocket = io(process.env.REACT_APP_SERVER_URL || 'http://localhost:3001');
@@ -230,6 +237,9 @@ function App() {
           Asterisk Call Management System
         </Typography>
 
+        {/* WebRTC Phone Component */}
+        <WebRTCPhone />
+
         {/* Call Initiation Form */}
         <Paper elevation={3} sx={{ p: 3, mb: 4 }}>
           <Typography variant="h5" gutterBottom>
@@ -274,6 +284,37 @@ function App() {
             </Grid>
           </Grid>
         </Paper>
+
+        {/* WebRTC Phone Component */}
+        <Box mb={4}>
+          <FormControlLabel
+            control={
+              <Switch
+                checked={useWebPhone}
+                onChange={(e) => setUseWebPhone(e.target.checked)}
+                color="primary"
+              />
+            }
+            label="Enable Web Phone (Talk directly from browser)"
+          />
+          
+          {useWebPhone && (
+            <WebRTCPhone
+              ref={webPhoneRef}
+              onCallStatusChange={(status, number) => {
+                console.log('WebRTC call status:', status, number);
+                if (status === 'connected') {
+                  showNotification(`Web call connected to ${number}`, 'success');
+                } else if (status === 'ended') {
+                  showNotification('Web call ended', 'info');
+                }
+              }}
+              onMakeCall={makeCall}
+              selfNumber={selfNumber}
+              customerNumber={customerNumber}
+            />
+          )}
+        </Box>
 
         {/* Active Calls */}
         <Typography variant="h5" gutterBottom>
