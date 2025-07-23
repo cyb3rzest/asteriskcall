@@ -46,12 +46,12 @@ apt install -y git build-essential nginx
 
 # Create application directory
 print_status "Setting up application directory..."
-mkdir -p /opt/simple-softphone
+mkdir -p /opt/asterisk-call-system
 
-# Copy project files from current directory to /opt/simple-softphone
+# Copy project files from current directory to /opt/asterisk-call-system
 print_status "Copying project files..."
-cp -r * /opt/simple-softphone/ 2>/dev/null || true
-cd /opt/simple-softphone
+cp -r * /opt/asterisk-call-system/ 2>/dev/null || true
+cd /opt/asterisk-call-system
 
 # Install dependencies
 print_status "Installing application dependencies..."
@@ -118,7 +118,7 @@ server {
     server_name _;
     
     location / {
-        root /opt/simple-softphone/frontend/build;
+        root /opt/asterisk-call-system/frontend/build;
         try_files \$uri \$uri/ /index.html;
     }
     
@@ -163,7 +163,7 @@ module.exports = {
   apps: [{
     name: 'simple-softphone',
     script: './backend/server.js',
-    cwd: '/opt/simple-softphone',
+    cwd: '/opt/asterisk-call-system',
     instances: 1,
     autorestart: true,
     watch: false,
@@ -191,7 +191,7 @@ echo ""
 echo "🎉 Simple Softphone is now running!"
 echo ""
 echo "📋 System Information:"
-echo "   - Web Interface: http://$(curl -s ifconfig.me || echo 'YOUR_SERVER_IP')"
+echo "   - Web Interface: http://46.62.157.243"
 echo "   - Backend API: http://localhost:3001"
 echo "   - Asterisk ARI: http://localhost:8088/asterisk/ari"
 echo ""
