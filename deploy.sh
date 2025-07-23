@@ -1,5 +1,5 @@
 #!/bin/bash
-echo "🚀 Deploying Simple Softphone to 46.62.157.243..."
+echo "🚀 Manual Deploy - Simple Softphone to 46.62.157.243..."
 
 # Navigate to project directory
 cd /opt/asterisk-call-system
