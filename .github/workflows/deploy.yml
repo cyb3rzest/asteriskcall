@@ -13,11 +13,26 @@ jobs:
     steps:
     - name: 🚀 Checkout code
       uses: actions/checkout@v4
+
+    - name: 🧹 Generate lock files if missing
+      run: |
+        if [ ! -f package-lock.json ]; then
+          echo "📦 Generating root package-lock.json..."
+          npm install --package-lock-only
+        fi
+        if [ -d backend ] && [ ! -f backend/package-lock.json ]; then
+          echo "📦 Generating backend/package-lock.json..."
+          cd backend && npm install --package-lock-only && cd ..
+        fi
+        if [ -d frontend ] && [ ! -f frontend/package-lock.json ]; then
+          echo "📦 Generating frontend/package-lock.json..."
+          cd frontend && npm install --package-lock-only && cd ..
+        fi
       
     - name: 🔧 Setup Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '20'
+        node-version: '22'
         cache: 'npm'
         
     - name: 📦 Install dependencies locally (for testing)
