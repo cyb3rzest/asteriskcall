@@ -1,0 +1,197 @@
+name: Auto Deploy to Server
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 🚀 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🧹 Generate lock files if missing
+      run: |
+        if [ ! -f package-lock.json ]; then
+          echo "📦 Generating root package-lock.json..."
+          npm install --package-lock-only
+        fi
+        if [ -d backend ] && [ ! -f backend/package-lock.json ]; then
+          echo "📦 Generating backend/package-lock.json..."
+          cd backend && npm install --package-lock-only && cd ..
+        fi
+        if [ -d frontend ] && [ ! -f frontend/package-lock.json ]; then
+          echo "📦 Generating frontend/package-lock.json..."
+          cd frontend && npm install --package-lock-only && cd ..
+        fi
+      
+    - name: 🔧 Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        cache: 'npm'
+        
+    - name: 📦 Install dependencies locally (for testing)
+      run: |
+        npm install
+        cd backend && npm install
+        cd ../frontend && npm install
+        
+    - name: 🏗️ Build frontend (for testing)
+      run: |
+        cd frontend
+        npm run build
+        
+    - name: 🚀 Deploy to Server
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: 46.62.157.243
+        username: root
+        password: ${{ secrets.SERVER_PASSWORD }}
+        port: 22
+        script: |
+          echo "🚀 Starting auto-deployment..."
+          
+          # Navigate to project directory
+          cd /opt/asterisk-call-system
+          
+          # Stop application
+          pm2 stop simple-softphone 2>/dev/null || true
+          pm2 stop asterisk-call-backend 2>/dev/null || true
+          
+          # Pull latest changes
+          echo "📥 Pulling latest changes..."
+          git pull origin main
+          
+          # Install dependencies
+          echo "📦 Installing dependencies..."
+          npm install
+          cd backend && npm install && cd ..
+          cd frontend && npm install && cd ..
+          
+          # Build frontend
+          echo "🏗️ Building frontend..."
+          cd frontend && npm run build && cd ..
+          
+          # Copy Asterisk configurations
+          echo "⚙️ Updating Asterisk configurations..."
+          cp asterisk-configs/ari.conf /etc/asterisk/
+          cp asterisk-configs/extensions.conf /etc/asterisk/
+          cp asterisk-configs/pjsip.conf /etc/asterisk/
+          cp asterisk-configs/modules.conf /etc/asterisk/
+          
+          # Configure Asterisk HTTP
+          echo "🌐 Configuring Asterisk HTTP..."
+          tee /etc/asterisk/http.conf << 'EOF'
+          [general]
+          enabled=yes
+          bindaddr=0.0.0.0
+          bindport=8088
+          prefix=asterisk
+          enablestatic=yes
+          EOF
+          
+          # Create environment file
+          echo "🔧 Creating environment configuration..."
+          cat > backend/.env << 'EOF'
+          PORT=3001
+          ASTERISK_HOST=127.0.0.1
+          ARI_PORT=8088
+          ARI_USERNAME=softphone
+          ARI_PASSWORD=softphone123
+          EOF
+          
+          # Restart Asterisk
+          echo "🔄 Restarting Asterisk..."
+          systemctl restart asterisk
+          sleep 10
+          
+          # Setup Nginx
+          echo "🌐 Configuring Nginx..."
+          tee /etc/nginx/sites-available/simple-softphone << 'EOF'
+          server {
+              listen 80;
+              server_name 46.62.157.243;
+              
+              location / {
+                  root /opt/asterisk-call-system/frontend/build;
+                  try_files $uri $uri/ /index.html;
+              }
+              
+              location /api {
+                  proxy_pass http://localhost:3001;
+                  proxy_http_version 1.1;
+                  proxy_set_header Upgrade $http_upgrade;
+                  proxy_set_header Connection 'upgrade';
+                  proxy_set_header Host $host;
+                  proxy_cache_bypass $http_upgrade;
+              }
+              
+              location /socket.io {
+                  proxy_pass http://localhost:3001;
+                  proxy_http_version 1.1;
+                  proxy_set_header Upgrade $http_upgrade;
+                  proxy_set_header Connection 'upgrade';
+                  proxy_set_header Host $host;
+              }
+          }
+          EOF
+          
+          # Enable nginx site
+          ln -sf /etc/nginx/sites-available/simple-softphone /etc/nginx/sites-enabled/
+          rm -f /etc/nginx/sites-enabled/default
+          nginx -t && systemctl reload nginx
+          
+          # Create PM2 ecosystem file
+          cat > ecosystem.config.js << 'EOF'
+          module.exports = {
+            apps: [{
+              name: 'simple-softphone',
+              script: './backend/server.js',
+              cwd: '/opt/asterisk-call-system',
+              instances: 1,
+              autorestart: true,
+              watch: false,
+              max_memory_restart: '1G',
+              env: {
+                NODE_ENV: 'production',
+                PORT: 3001
+              },
+              error_file: './logs/err.log',
+              out_file: './logs/out.log',
+              log_file: './logs/combined.log',
+              time: true
+            }]
+          };
+          EOF
+          
+          # Create logs directory
+          mkdir -p logs
+          
+          # Start application
+          echo "🚀 Starting application..."
+          pm2 start ecosystem.config.js
+          pm2 save
+          
+          echo ""
+          echo "✅ Auto-deployment completed successfully!"
+          echo "🌐 Softphone available at: http://46.62.157.243"
+          
+          # Test the deployment
+          sleep 5
+          curl -f http://localhost:3001/api/health || echo "❌ Health check failed"
+          
+    - name: 🧪 Deployment Status
+      if: success()
+      run: |
+        echo "✅ Deployment successful!"
+        echo "🌐 Your softphone is live at: http://46.62.157.243"
+        
+    - name: ❌ Deployment Failed
+      if: failure()
+      run: |
+        echo "❌ Deployment failed! Check the logs above."
