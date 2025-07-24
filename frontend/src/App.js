@@ -19,9 +19,7 @@ import {
   Phone,
   PhoneDisabled,
   Pause,
-  PlayArrow,
-  CallMade,
-  CallReceived
+  PlayArrow
 } from '@mui/icons-material';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
@@ -46,7 +44,7 @@ function App() {
   const [myNumber, setMyNumber] = useState('');
   const [customerNumber, setCustomerNumber] = useState('');
   const [activeCalls, setActiveCalls] = useState([]);
-  const [socket, setSocket] = useState(null);
+  const [, setSocket] = useState(null);
   const [notification, setNotification] = useState({ open: false, message: '', severity: 'info' });
   const [isDialing, setIsDialing] = useState(false);
 
